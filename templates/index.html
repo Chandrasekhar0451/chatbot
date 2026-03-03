@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document Retrieval QA</title>
+  <style>
+    :root {
+      --bg-color: #f8fafc;
+      --text-color: #1e293b;
+      --primary-color: #3b82f6;
+      --secondary-color: #e2e8f0;
+      --card-bg: #ffffff;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+    header {
+      width: 100%;
+      background: var(--card-bg);
+      padding: 24px 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--text-color);
+    }
+    .container {
+      width: 100%;
+      max-width: 768px;
+      padding: 0 20px;
+    }
+    .search-box {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .upload-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 16px 20px;
+      border: 1px solid var(--secondary-color);
+      border-radius: 12px;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input[type="text"]:focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    }
+    input[type="file"] {
+      border: 1px solid var(--secondary-color);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+    }
+    button {
+      padding: 16px 28px;
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #2563eb;
+    }
+    button:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      margin-bottom: 24px;
+    }
+    .card h3 {
+      margin-top: 0;
+      margin-bottom: 20px;
+      font-size: 1.25rem;
+      color: var(--primary-color);
+      border-bottom: 1px solid var(--secondary-color);
+      padding-bottom: 10px;
+    }
+    .answer {
+      white-space: pre-wrap;
+      line-height: 1.7;
+      font-size: 1.05rem;
+    }
+    .sources-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 16px;
+      color: #64748b;
+    }
+    .source-pill {
+      display: inline-block;
+      background-color: #f1f5f9;
+      color: #475569;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 0.875rem;
+      margin-right: 8px;
+      margin-bottom: 8px;
+      border: 1px solid #e2e8f0;
+    }
+    .knowledge-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .empty-state {
+      text-align: center;
+      color: #94a3b8;
+      margin-top: 60px;
+      font-size: 1.1rem;
+    }
+    .status {
+      padding: 12px 14px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-size: 0.95rem;
+    }
+    .status-success {
+      background: #ecfdf3;
+      color: #166534;
+      border: 1px solid #bbf7d0;
+    }
+    .status-error {
+      background: #fef2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
+    .hidden {
+      display: none;
+    }
+    .upload-progress-wrap {
+      width: 100%;
+      margin-bottom: 16px;
+    }
+    .progress-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      color: #475569;
+      margin-bottom: 6px;
+    }
+    .progress-meta {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-top: 6px;
+    }
+    .progress-track {
+      width: 100%;
+      height: 10px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #1d4ed8);
+      transition: width 0.15s linear;
+    }
+    .search-locked {
+      opacity: 0.6;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Document Retrieval & QA System</h1>
+  </header>
+
+  <div class="container">
+    <form id="uploadForm" method="post" enctype="multipart/form-data" class="upload-box">
+      <input id="uploadFileInput" type="file" name="upload_file" accept=".txt,.pdf,.docx" required>
+      <button type="submit">Upload & Ingest</button>
+    </form>
+
+    <div id="uploadProgressWrap" class="upload-progress-wrap hidden">
+      <div class="progress-row">
+        <span id="uploadProgressLabel">Uploading...</span>
+        <span id="uploadProgressPct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div id="uploadProgressBar" class="progress-bar"></div>
+      </div>
+      <div id="uploadTimeMeta" class="progress-meta">Elapsed: 0s</div>
+    </div>
+
+    <div id="uploadMessage" class="status status-success {% if not upload_message %}hidden{% endif %}">{{ upload_message }}</div>
+    <div id="uploadError" class="status status-error {% if not upload_error %}hidden{% endif %}">{{ upload_error }}</div>
+
+    <form id="searchForm" method="post" class="search-box">
+      <input id="searchInput" type="text" name="query" placeholder="Ask a question about your documents..." value="{{ query }}" required>
+      <button id="searchBtn" type="submit">Search</button>
+    </form>
+
+    <!-- <div class="card">
+      <h3>Knowledge Files</h3>
+      <div id="knowledgeList" class="knowledge-list">
+        {% if uploaded_files %}
+          {% for file in uploaded_files %}
+            <div class="source-pill">[doc] {{ file }}</div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-state" style="margin-top: 0;">No files in knowledge folder yet.</div>
+        {% endif %}
+      </div>
+    </div> -->
+
+    {% if answer %}
+      <div class="card">
+        <h3>Answer</h3>
+        <div class="answer">{{ answer }}</div>
+
+        {% if chunks %}
+          <div class="sources-title">Sources Used</div>
+          <div>
+            {% set unique_sources = [] %}
+            {% for c in chunks %}
+              {% if c.source not in unique_sources %}
+                {% set _ = unique_sources.append(c.source) %}
+              {% endif %}
+            {% endfor %}
+
+            {% for src in unique_sources %}
+              <div class="source-pill">[doc] {{ src }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% elif query %}
+      <div class="empty-state">
+        <p>No relevant data found for your query. Try rephrasing.</p>
+      </div>
+    {% endif %}
+  </div>
+
+  <script>
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadInput = document.getElementById("uploadFileInput");
+    const searchForm = document.getElementById("searchForm");
+    const searchInput = document.getElementById("searchInput");
+    const searchBtn = document.getElementById("searchBtn");
+    const uploadProgressWrap = document.getElementById("uploadProgressWrap");
+    const uploadProgressLabel = document.getElementById("uploadProgressLabel");
+    const uploadProgressPct = document.getElementById("uploadProgressPct");
+    const uploadProgressBar = document.getElementById("uploadProgressBar");
+    const uploadTimeMeta = document.getElementById("uploadTimeMeta");
+    const uploadMessage = document.getElementById("uploadMessage");
+    const uploadError = document.getElementById("uploadError");
+    const knowledgeList = document.getElementById("knowledgeList");
+    let progressTicker = null;
+    let timeTicker = null;
+    let shownPercent = 0;
+    let targetPercent = 0;
+    let uploadStartedAt = 0;
+    let latestLoadedBytes = 0;
+    let latestTotalBytes = 0;
+
+    function hideAlerts() {
+      uploadMessage.classList.add("hidden");
+      uploadError.classList.add("hidden");
+      uploadMessage.textContent = "";
+      uploadError.textContent = "";
+    }
+
+    function setSearchLocked(locked) {
+      searchInput.disabled = locked;
+      searchBtn.disabled = locked;
+      if (locked) {
+        searchForm.classList.add("search-locked");
+      } else {
+        searchForm.classList.remove("search-locked");
+      }
+    }
+
+    function renderKnowledgeFiles(files) {
+      if (!files || files.length === 0) {
+        knowledgeList.innerHTML = '<div class="empty-state" style="margin-top: 0;">No files in knowledge folder yet.</div>';
+        return;
+      }
+      knowledgeList.innerHTML = "";
+      files.forEach(function (name) {
+        const pill = document.createElement("div");
+        pill.className = "source-pill";
+        pill.textContent = `[doc] ${name}`;
+        knowledgeList.appendChild(pill);
+      });
+    }
+
+    function startProgressTicker() {
+      shownPercent = 0;
+      targetPercent = 0;
+      latestLoadedBytes = 0;
+      latestTotalBytes = 0;
+      uploadStartedAt = Date.now();
+      uploadProgressPct.textContent = "0%";
+      uploadProgressBar.style.width = "0%";
+      uploadTimeMeta.textContent = "Elapsed: 0s";
+      if (progressTicker) {
+        clearInterval(progressTicker);
+      }
+      progressTicker = setInterval(function () {
+        if (shownPercent < targetPercent) {
+          shownPercent += 1;
+          uploadProgressPct.textContent = `${shownPercent}%`;
+          uploadProgressBar.style.width = `${shownPercent}%`;
+        }
+      }, 20);
+
+      if (timeTicker) {
+        clearInterval(timeTicker);
+      }
+      timeTicker = setInterval(function () {
+        const elapsedSec = Math.max(1, Math.floor((Date.now() - uploadStartedAt) / 1000));
+        if (latestLoadedBytes > 0 && latestTotalBytes > 0 && latestLoadedBytes < latestTotalBytes) {
+          const speed = latestLoadedBytes / elapsedSec;
+          if (speed > 0) {
+            const remainingSec = Math.ceil((latestTotalBytes - latestLoadedBytes) / speed);
+            uploadTimeMeta.textContent = `Elapsed: ${elapsedSec}s | ETA: ${remainingSec}s`;
+            return;
+          }
+        }
+        uploadTimeMeta.textContent = `Elapsed: ${elapsedSec}s`;
+      }, 1000);
+    }
+
+    function stopProgressTicker() {
+      if (progressTicker) {
+        clearInterval(progressTicker);
+        progressTicker = null;
+      }
+      if (timeTicker) {
+        clearInterval(timeTicker);
+        timeTicker = null;
+      }
+    }
+
+    async function refreshKnowledgeFiles() {
+      try {
+        const res = await fetch("/knowledge-files", { method: "GET" });
+        const data = await res.json();
+        renderKnowledgeFiles(data.uploaded_files || []);
+      } catch (err) {
+        // Keep server-rendered list when refresh fails.
+      }
+    }
+
+    refreshKnowledgeFiles();
+
+    uploadForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      hideAlerts();
+
+      if (!uploadInput.files || uploadInput.files.length === 0) {
+        uploadError.textContent = "Please select a file to upload.";
+        uploadError.classList.remove("hidden");
+        return;
+      }
+
+      const fileName = uploadInput.files[0].name;
+      const formData = new FormData(uploadForm);
+      const xhr = new XMLHttpRequest();
+
+      setSearchLocked(true);
+      uploadProgressWrap.classList.remove("hidden");
+      uploadProgressLabel.textContent = `Uploading ${fileName}...`;
+      startProgressTicker();
+
+      xhr.open("POST", "/upload", true);
+
+      xhr.upload.onprogress = function (e) {
+        if (!e.lengthComputable) return;
+        latestLoadedBytes = e.loaded;
+        latestTotalBytes = e.total;
+        const rawPercent = Math.round((e.loaded / e.total) * 100);
+        targetPercent = Math.max(targetPercent, Math.min(rawPercent, 99));
+      };
+
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== XMLHttpRequest.DONE) return;
+
+        setSearchLocked(false);
+        uploadProgressLabel.textContent = `Processing ${fileName}...`;
+
+        let response = {};
+        try {
+          response = JSON.parse(xhr.responseText || "{}");
+        } catch (err) {
+          response = {};
+        }
+
+        targetPercent = 100;
+        uploadTimeMeta.textContent = "Elapsed: done";
+        const finishAndHide = function () {
+          if (shownPercent >= 100) {
+            stopProgressTicker();
+            uploadProgressWrap.classList.add("hidden");
+            return;
+          }
+          setTimeout(finishAndHide, 20);
+        };
+        finishAndHide();
+
+        if (xhr.status >= 200 && xhr.status < 300 && response.ok) {
+          uploadMessage.textContent = response.message || "Upload complete.";
+          uploadMessage.classList.remove("hidden");
+          uploadInput.value = "";
+          renderKnowledgeFiles(response.uploaded_files || []);
+        } else {
+          uploadError.textContent = response.message || "Upload failed.";
+          uploadError.classList.remove("hidden");
+        }
+      };
+
+      xhr.send(formData);
+    });
+  </script>
+</body>
+</html>
