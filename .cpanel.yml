@@ -1,5 +1,0 @@
----
-deployment:
-  tasks:
-    - export DEPLOYPATH=/home/zfianv8ex7cj/public_html/chatbot
-    - /bin/cp -R * $DEPLOYPATH
