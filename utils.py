@@ -14,26 +14,50 @@ from nltk.tokenize import sent_tokenize
 from io import BytesIO
 
 def stream_txt(path):
+    print(f"[stream_txt] Reading text file: {path}")
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        block_count = 0
         # Read in blocks so it's faster than line by line, but keeps memory low
         while True:
             block = f.read(1024 * 1024) # 1MB blocks
             if not block:
                 break
+            block_count += 1
+            print(f"[stream_txt] Yielding block {block_count} ({len(block)} chars)")
             yield block
+    print(f"[stream_txt] Finished reading. Total blocks: {block_count}")
 
 def stream_pdf(path):
-    reader = PdfReader(path)
-    for page in reader.pages:
-        text = page.extract_text()
-        if text and text.strip():
-            yield text
+    print(f"[stream_pdf] Reading PDF file: {path}")
+    try:
+        reader = PdfReader(path)
+        print(f"[stream_pdf] PDF loaded. Total pages: {len(reader.pages)}")
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if text and text.strip():
+                print(f"[stream_pdf] Yielding text from page {i+1} ({len(text)} chars)")
+                yield text
+            else:
+                print(f"[stream_pdf] Page {i+1} has no text, skipping")
+        print("[stream_pdf] Finished reading all pages")
+    except Exception as e:
+        print(f"[stream_pdf] ERROR reading PDF: {e}")
+        raise
 
 def stream_docx(path):
-    doc = Document(path)
-    for p in doc.paragraphs:
-        if p.text.strip():
-            yield p.text
+    print(f"[stream_docx] Reading DOCX file: {path}")
+    try:
+        doc = Document(path)
+        print(f"[stream_docx] DOCX loaded. Total paragraphs: {len(doc.paragraphs)}")
+        para_count = 0
+        for p in doc.paragraphs:
+            if p.text.strip():
+                para_count += 1
+                yield p.text
+        print(f"[stream_docx] Finished. Yielded {para_count} non-empty paragraphs")
+    except Exception as e:
+        print(f"[stream_docx] ERROR reading DOCX: {e}")
+        raise
 
 def chunk_text_stream(text_stream, sentences_per_chunk=5, overlap=2):
     """
@@ -70,16 +94,28 @@ def chunk_text_stream(text_stream, sentences_per_chunk=5, overlap=2):
         sentences = sentences[sentences_per_chunk - overlap:]
 
 def yield_file_chunks(path, sentences_per_chunk=5, overlap=2):
+    print(f"[yield_file_chunks] Function called for: {path}")
     if path.lower().endswith(".txt"):
+        print("[yield_file_chunks] File type: TXT")
         stream = stream_txt(path)
     elif path.lower().endswith(".pdf"):
+        print("[yield_file_chunks] File type: PDF")
         stream = stream_pdf(path)
     elif path.lower().endswith(".docx"):
+        print("[yield_file_chunks] File type: DOCX")
         stream = stream_docx(path)
     else:
+        print(f"[yield_file_chunks] ERROR: Unsupported file type for {path}")
         return
 
-    yield from chunk_text_stream(stream, sentences_per_chunk, overlap)
+    print("[yield_file_chunks] Starting chunk_text_stream...")
+    chunk_count = 0
+    for chunk in chunk_text_stream(stream, sentences_per_chunk, overlap):
+        chunk_count += 1
+        if chunk_count % 50 == 0:
+            print(f"[yield_file_chunks] Yielded {chunk_count} chunks so far...")
+        yield chunk
+    print(f"[yield_file_chunks] Finished. Total chunks yielded: {chunk_count}")
 
 def stream_uploaded_txt(file_storage):
     raw = file_storage.read()

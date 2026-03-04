@@ -28,14 +28,20 @@ os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
 
 
 def get_embedding_function():
+    print("[get_embedding_function] Function called")
     backend = os.getenv("EMBEDDING_BACKEND", "default").strip().lower()
     model_name = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2").strip()
+    print(f"[get_embedding_function] backend={backend}, model_name={model_name}")
 
     if backend in {"default", "onnx"}:
+        print("[get_embedding_function] Using DefaultEmbeddingFunction (ONNX)")
         return embedding_functions.DefaultEmbeddingFunction()
 
     try:
-        return embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
+        print(f"[get_embedding_function] Loading SentenceTransformer model: {model_name}")
+        ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
+        print("[get_embedding_function] SentenceTransformer loaded successfully")
+        return ef
     except BaseException as e:
         print(f"Warning: failed to initialize sentence-transformer embedding ({e}). Falling back to default embedding.")
         return embedding_functions.DefaultEmbeddingFunction()
@@ -46,26 +52,34 @@ STOPWORDS = {
     "when", "where", "which", "who", "why", "with", "you", "your"
 }
 
-print("Initializing ChromaDB in app...")
+print("[STARTUP] Initializing ChromaDB in app...")
 chroma_client = chromadb.PersistentClient(path="index/chroma_db")
+print("[STARTUP] ChromaDB PersistentClient created successfully")
 embedding_ef = get_embedding_function()
+print("[STARTUP] Embedding function ready")
 
 try:
     collection = chroma_client.get_collection(
         name="knowledge_base",
         embedding_function=embedding_ef
     )
+    print("[STARTUP] Existing collection 'knowledge_base' loaded successfully")
 except Exception as e:
-    print(f"Warning: ChromaDB collection not found yet. It will be created on first upload. Error: {e}")
+    print(f"[STARTUP] Warning: ChromaDB collection not found yet. It will be created on first upload. Error: {e}")
     collection = None
 
 def ensure_collection():
     global collection
+    print("[ensure_collection] Function called")
     if collection is None:
+        print("[ensure_collection] Collection is None, creating new collection...")
         collection = chroma_client.get_or_create_collection(
             name="knowledge_base",
             embedding_function=embedding_ef
         )
+        print("[ensure_collection] Collection created successfully")
+    else:
+        print("[ensure_collection] Collection already exists")
     return collection
 
 def list_knowledge_files():
@@ -78,71 +92,122 @@ def list_knowledge_files():
     return files
 
 def ingest_uploaded_file(uploaded_file):
+    print("[ingest_uploaded_file] ========== FUNCTION CALLED ==========")
     if uploaded_file is None:
+        print("[ingest_uploaded_file] ERROR: uploaded_file is None")
         return False, "Please select a file to upload."
 
+    print(f"[ingest_uploaded_file] Received file: {uploaded_file.filename}")
     filename = secure_filename(uploaded_file.filename or "")
     if not filename:
+        print("[ingest_uploaded_file] ERROR: filename is empty after secure_filename")
         return False, "Please select a file to upload."
 
     ext = os.path.splitext(filename)[1].lower()
+    print(f"[ingest_uploaded_file] Filename: {filename}, Extension: {ext}")
     if ext not in ALLOWED_UPLOAD_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_UPLOAD_EXTENSIONS))
+        print(f"[ingest_uploaded_file] ERROR: Extension '{ext}' not allowed")
         return False, f"Unsupported file type. Allowed types: {allowed}"
 
     saved_path = os.path.join(KNOWLEDGE_DIR, filename)
-    uploaded_file.stream.seek(0)
-    uploaded_file.save(saved_path)
+    print(f"[ingest_uploaded_file] Saving file to: {saved_path}")
+    try:
+        uploaded_file.stream.seek(0)
+        uploaded_file.save(saved_path)
+        print(f"[ingest_uploaded_file] File saved successfully. Size: {os.path.getsize(saved_path)} bytes")
+    except Exception as e:
+        print(f"[ingest_uploaded_file] ERROR saving file: {e}")
+        return False, f"Failed to save file: {e}"
 
+    print("[ingest_uploaded_file] Getting/creating collection...")
     target_collection = ensure_collection()
+    print("[ingest_uploaded_file] Collection ready")
 
+    print(f"[ingest_uploaded_file] Checking for existing chunks with source='{filename}'...")
     existing = target_collection.get(where={"source": filename}, include=[])
     existing_ids = existing.get("ids", []) if existing else []
     if existing_ids:
+        print(f"[ingest_uploaded_file] Deleting {len(existing_ids)} existing chunks for this file")
         target_collection.delete(ids=existing_ids)
+        print("[ingest_uploaded_file] Old chunks deleted")
+    else:
+        print("[ingest_uploaded_file] No existing chunks found for this file")
 
     batch_documents = []
     batch_metadatas = []
     batch_ids = []
     chunk_count = 0
 
-    for chunk in yield_file_chunks(saved_path):
-        chunk = (chunk or "").strip()
-        if not chunk:
-            continue
+    print(f"[ingest_uploaded_file] Starting chunking process for: {saved_path}")
+    try:
+        for chunk in yield_file_chunks(saved_path):
+            chunk = (chunk or "").strip()
+            if not chunk:
+                continue
 
-        batch_documents.append(chunk)
-        batch_metadatas.append({"source": filename})
-        batch_ids.append(f"{filename}_{uuid.uuid4().hex}_{chunk_count}")
-        chunk_count += 1
+            batch_documents.append(chunk)
+            batch_metadatas.append({"source": filename})
+            batch_ids.append(f"{filename}_{uuid.uuid4().hex}_{chunk_count}")
+            chunk_count += 1
 
-        if len(batch_documents) >= UPLOAD_INGEST_BATCH_SIZE:
+            if len(batch_documents) >= UPLOAD_INGEST_BATCH_SIZE:
+                print(f"[ingest_uploaded_file] Upserting batch of {len(batch_documents)} chunks (total so far: {chunk_count})...")
+                try:
+                    target_collection.upsert(
+                        documents=batch_documents,
+                        metadatas=batch_metadatas,
+                        ids=batch_ids
+                    )
+                    print(f"[ingest_uploaded_file] Batch upsert successful")
+                except Exception as e:
+                    print(f"[ingest_uploaded_file] ERROR during batch upsert: {e}")
+                    return False, f"Failed during embedding/indexing: {e}"
+                batch_documents = []
+                batch_metadatas = []
+                batch_ids = []
+    except Exception as e:
+        print(f"[ingest_uploaded_file] ERROR during chunking: {e}")
+        return False, f"Failed during file chunking: {e}"
+
+    print(f"[ingest_uploaded_file] Chunking complete. Total chunks: {chunk_count}")
+
+    if batch_documents:
+        print(f"[ingest_uploaded_file] Upserting final batch of {len(batch_documents)} chunks...")
+        try:
             target_collection.upsert(
                 documents=batch_documents,
                 metadatas=batch_metadatas,
                 ids=batch_ids
             )
-            batch_documents = []
-            batch_metadatas = []
-            batch_ids = []
-
-    if batch_documents:
-        target_collection.upsert(
-            documents=batch_documents,
-            metadatas=batch_metadatas,
-            ids=batch_ids
-        )
+            print("[ingest_uploaded_file] Final batch upsert successful")
+        except Exception as e:
+            print(f"[ingest_uploaded_file] ERROR during final batch upsert: {e}")
+            return False, f"Failed during final embedding/indexing: {e}"
 
     if chunk_count == 0:
+        print("[ingest_uploaded_file] WARNING: No readable text found in the file")
         return False, "No readable text found in the uploaded file."
 
+    print(f"[ingest_uploaded_file] ========== SUCCESS: {chunk_count} chunks indexed ==========")
     return True, f"Uploaded and indexed '{filename}' with {chunk_count} chunks."
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    uploaded_file = request.files.get("upload_file")
+    print("\n[upload] >>>>>>>>>> /upload endpoint hit <<<<<<<<<<")
+    print(f"[upload] Request content length: {request.content_length}")
+    print(f"[upload] Request content type: {request.content_type}")
+    try:
+        uploaded_file = request.files.get("upload_file")
+        print(f"[upload] File received: {uploaded_file.filename if uploaded_file else 'None'}")
+    except Exception as e:
+        print(f"[upload] ERROR getting file from request: {e}")
+        return jsonify({"ok": False, "message": f"Error reading upload: {e}", "uploaded_files": list_knowledge_files()}), 400
+
     ok, message = ingest_uploaded_file(uploaded_file)
     status_code = 200 if ok else 400
+    print(f"[upload] Result: ok={ok}, message={message}")
+    print("[upload] >>>>>>>>>> /upload endpoint finished <<<<<<<<<<\n")
     return jsonify(
         {
             "ok": ok,
@@ -156,11 +221,14 @@ def knowledge_files():
     return jsonify({"uploaded_files": list_knowledge_files()}), 200
 
 def generate_rag_answer(chunks, query):
+    print(f"[generate_rag_answer] Function called with {len(chunks)} chunks")
     if not chunks:
+        print("[generate_rag_answer] No chunks provided, returning default message")
         return "Sorry, I couldn't find any relevant documents to answer your question."
 
     # Combine all retrieved text to serve as context
     context = "\n\n".join([chunk["text"].strip() for chunk in chunks])
+    print(f"[generate_rag_answer] Context length: {len(context)} characters")
 
     prompt = f"""You are a helpful, intelligent Document Retrieval Assistant. 
 Please read the provided Excerpts and answer the User's Question clearly and conversationally.
@@ -175,6 +243,7 @@ User's Question: {query}
 Answer:"""
 
     try:
+        print(f"[generate_rag_answer] Calling LLM API (model: {os.getenv('XAI_MODEL', 'grok-3-latest')})...")
         response = openai_client.chat.completions.create(
             model=os.getenv("XAI_MODEL", "grok-3-latest"),
             temperature=0,
@@ -183,10 +252,11 @@ Answer:"""
                 {"role": "user", "content": prompt}
             ]
         )
+        print("[generate_rag_answer] LLM API response received successfully")
         return response.choices[0].message.content
         
     except Exception as e:
-        print(f"LLM Generation Error: {e}")
+        print(f"[generate_rag_answer] ERROR - LLM Generation Error: {e}")
         # Fallback to the raw chunks if the API call fails
         seen = set()
         paragraphs = []
@@ -261,7 +331,9 @@ def rerank_and_filter_chunks(raw_chunks, query, top_k, max_distance):
     return fallback
 
 def search(query, top_k=None):
+    print(f"[search] Function called with query: '{query[:50]}...'")
     if collection is None:
+        print("[search] ERROR: Collection is None, search unavailable")
         return {"answer": "Search is currently unavailable because the index has not been built."}
 
     if top_k is None:
@@ -269,11 +341,14 @@ def search(query, top_k=None):
 
     initial_k = max(top_k * 4, 20)
     max_distance = float(os.getenv("RETRIEVAL_MAX_DISTANCE", "1.4"))
+    print(f"[search] top_k={top_k}, initial_k={initial_k}, max_distance={max_distance}")
 
+    print("[search] Querying ChromaDB...")
     results = collection.query(
         query_texts=[query],
         n_results=initial_k
     )
+    print(f"[search] ChromaDB returned {len(results['documents'][0]) if results and results['documents'] and results['documents'][0] else 0} results")
 
     raw_chunks = []
     if results and results['documents'] and results['documents'][0]:
@@ -289,8 +364,13 @@ def search(query, top_k=None):
                 "text": doc_text,
             })
 
+    print(f"[search] Reranking {len(raw_chunks)} chunks...")
     chunks = rerank_and_filter_chunks(raw_chunks, query, top_k=top_k, max_distance=max_distance)
+    print(f"[search] After reranking: {len(chunks)} chunks")
+
+    print("[search] Generating RAG answer...")
     answer = generate_rag_answer(chunks, query)
+    print("[search] Answer generated successfully")
 
     return {
         "answer": answer,
@@ -299,6 +379,7 @@ def search(query, top_k=None):
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    print(f"[index] / endpoint hit, method={request.method}")
     query = ""
     answer = ""
     chunks = []
@@ -307,11 +388,14 @@ def index():
 
     if request.method == "POST":
         query = request.form.get("query", "").strip()
+        print(f"[index] POST query: '{query[:50]}...' " if query else "[index] POST with empty query")
         if query:
             result = search(query)
             answer = result.get("answer", "")
             chunks = result.get("chunks", [])
+            print(f"[index] Search returned {len(chunks)} chunks")
 
+    print("[index] Rendering template")
     return render_template(
         "index.html",
         query=query,
